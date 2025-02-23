@@ -1,0 +1,343 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>提案管理系統</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
+
+    <style>
+        /* 讓標題永遠固定在最上方 */
+        #title-bar {
+            position: sticky;
+            top: 0;
+            z-index: 50;
+            background-color: #f8fafc;
+        }
+        /* 確保表格不會影響到滾動條 */
+        .table-container {
+            max-height: 750px;
+            overflow-y: auto;
+        }
+    </style>
+</head>
+<body class="bg-gray-100">
+
+<div id="app" class="w-screen p-4 relative">
+    <!-- 標題 -->
+    <div id="title-bar" class="text-2xl font-bold text-center mb-4 py-4 shadow-md relative">
+        提案管理系統
+        <button 
+            @click="resetAllFilters" 
+            class="absolute top-2 right-4 px-4 py-2 bg-red-500 text-white rounded shadow-md hover:bg-red-600 transition">
+            全部重置
+        </button>
+    </div>
+    
+    <!-- 表格容器 -->
+    <div class="border border-gray-300 shadow-md relative w-full max-w-screen mx-auto">
+        <div class="table-container overflow-y-auto">
+            <table class="w-full bg-white">
+                <!-- 表頭 -->
+                <thead class="bg-gray-200 text-gray-600 uppercase text-sm sticky top-0 z-10">
+                    <tr>
+                        <th v-for="key in columnOrder" :key="key"
+                            class="py-3 px-4 text-center bg-gray-200 cursor-pointer relative"
+                            @click="key === '提案日期' ? sortColumn() : toggleDropdown(key, $event)">
+                            <span>{{ key }}</span>
+                            <span v-if="key === '提案日期'" 
+                                class="ml-2 px-1 py-0.5 rounded text-white text-xs font-bold transition-all duration-300"
+                                    :class="{
+                                        'bg-green-500': sortOrder === 'asc',
+                                        'bg-red-500': sortOrder === 'desc',
+                                        'bg-gray-400 opacity-50': sortOrder === null
+                                    }">
+                                {{ sortOrder === 'asc' ? '▲' : sortOrder === 'desc' ? '▼' : '↕' }}
+                            </span>
+                        </th>
+                        <th class="py-3 px-4 text-center bg-gray-200">查看</th>
+                    </tr>
+                </thead>
+            
+                <!-- 表格內容 -->
+                <tbody class="text-gray-700">
+                    <tr v-for="proposal in sortedProposals" :key="proposal['總表項次']" class="border-b align-top">
+                        <td class="py-3 px-4 text-center align-top"
+                            v-for="key in columnOrder" :key="key">
+                            <div v-if="key === '回覆備註'" 
+                                class="overflow-visible p-2 border rounded bg-gray-100 whitespace-pre-wrap break-keep text-left">
+                                <span v-text="getLastRemark(proposal[key])"></span>
+                            </div>                                                   
+                            <span v-else>{{ proposal[key] }}</span>
+                        </td>
+                        <!-- 查看按鈕 -->
+                        <td class="py-3 px-4 text-center align-top">
+                            <button @click="openEditModal(proposal)" class="px-3 py-1 bg-blue-500 text-white rounded">查看</button>
+                        </td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>    
+    </div>
+
+    <!-- 當沒有符合篩選條件的數據時 -->
+    <div v-if="sortedProposals.length === 0" class="text-center text-gray-500 py-4">
+        沒有符合條件的資料
+    </div>
+
+        <!-- 可編輯的「詳細資訊」卡片 -->
+    <div v-if="editingRow" class="fixed inset-0 bg-gray-900 bg-opacity-50 flex justify-center items-center z-50">
+        <div class="bg-white p-6 rounded-lg w-96">
+            <h3 class="text-xl font-bold mb-4">編輯資料</h3>
+            <div class="space-y-2">
+                <div v-for="(value, key) in editingRow" :key="key" class="flex justify-between">
+                    <span class="font-semibold">{{ key }}：</span>
+                    <input v-model="editingRow[key]" class="border px-2 py-1 w-full" />
+                </div>
+            </div>
+            <div class="mt-4 flex justify-between">
+                <button @click="closeEditModal" class="px-4 py-2 bg-gray-400 text-white rounded">取消</button>
+                <button @click="saveChanges" class="px-4 py-2 bg-green-500 text-white rounded">儲存</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 篩選選單 -->
+    <div v-if="dropdownOpen" class="fixed bg-white border shadow-lg rounded-lg p-4 z-50 w-72 dropdown-menu"
+        :style="{ top: dropdownPosition.top + 'px', left: dropdownPosition.left + 'px' }">
+
+        <!-- 搜索框 -->
+        <input type="text" v-model="searchQuery[dropdownOpen]" placeholder="輸入篩選條件..."
+            class="w-full px-3 py-2 border rounded mb-2">
+
+        <!-- "全選" 選項 -->
+        <label class="block py-2 font-bold">
+            <input type="checkbox" :checked="isAllSelected" @change="toggleAllSelection" class="mr-2">
+            全選 (ALL)
+        </label>
+
+        <!-- 可選條件清單 -->
+        <div class="max-h-80 overflow-y-auto">
+            <label v-for="option in filteredDropdownOptions" :key="option" class="block py-2">
+                <input type="checkbox"
+                :value="option"
+                :checked="pendingFilters[dropdownOpen]?.includes(option)"
+                @change="toggleFilterOption(option)"
+                class="mr-2">
+                {{ option }}
+            </label>
+        </div>
+
+        <!-- 操作按鈕 -->
+        <div class="mt-4 flex justify-between">
+            <!-- <button @click="resetFilter(dropdownOpen)" class="px-4 py-2 bg-gray-400 text-white rounded">重置</button> -->
+            <button @click="resetFilter(dropdownOpen)" class="px-4 py-2 bg-gray-400 text-white rounded">重置</button>
+            <button @click="applyFilters" class="px-4 py-2 bg-blue-500 text-white rounded">套用</button>
+        </div>
+    </div>
+
+
+
+</div>
+
+<script>
+const app = Vue.createApp({
+    data() {
+        return {
+            proposals: [],
+            columnOrder: [
+                "總表項次", "提案日期", "提案人", "站點", "部門", "部門owner", 
+                "提案內容", "預算金額", "審核狀態", "備註", "回覆備註"
+            ],
+            loading: true,
+            dropdownOpen: null, // 目前開啟的篩選標題
+            selectedFilters: {}, // 存儲篩選條件
+            pendingFilters: {},  // ✅ 這是暫存篩選條件，只有按下「套用」才會更新
+            searchQuery: {}, // 搜索框的輸入值
+            dropdownPosition: { top: 0, left: 0 }, // 記錄篩選卡片的位置
+            sortOrder: null, // 排序狀態 ('asc', 'desc', null)
+            editingRow: null, // 存放當前正在編輯的行
+        };
+    },
+    computed: {
+        // 取得篩選後仍然可選的唯一選項
+        filteredUniqueOptions() {
+            const options = {};
+            const filteredData = this.filteredProposals;
+            
+            if (filteredData.length > 0) {
+                Object.keys(filteredData[0]).forEach((key) => {
+                    options[key] = [...new Set(filteredData.map(p => p[key]))];
+                });
+            }
+            return options;
+        },
+        // 根據搜索條件篩選選單內容
+        filteredDropdownOptions() {
+            if (!this.dropdownOpen || !this.searchQuery[this.dropdownOpen]) {
+                return this.filteredUniqueOptions[this.dropdownOpen] || [];
+            }
+            return this.filteredUniqueOptions[this.dropdownOpen].filter(option =>
+                option.includes(this.searchQuery[this.dropdownOpen])
+            );
+        },
+        // 是否 "ALL" 被選擇
+        isAllSelected() {
+            if (!this.dropdownOpen || !this.filteredDropdownOptions.length) return false;
+            return this.pendingFilters[this.dropdownOpen]?.length === this.filteredDropdownOptions.length;
+        },
+        // 根據篩選條件過濾數據
+        filteredProposals() {
+            return this.proposals.filter(proposal => {
+                return Object.keys(this.selectedFilters).every(key => {
+                    // 如果 `selectedFilters[key]` 為空，則不進行篩選
+                    if (!this.selectedFilters[key] || this.selectedFilters[key].length === 0) return true;
+
+                    // **允許多選篩選條件**
+                    return this.selectedFilters[key].includes(proposal[key]);
+                });
+            });
+        },
+        // 排序 `提案日期`
+        sortedProposals() {
+            if (!this.sortOrder) return this.filteredProposals;
+            return [...this.filteredProposals].sort((a, b) => {
+                return this.sortOrder === "asc"
+                    ? Number(a["提案日期"]) - Number(b["提案日期"])
+                    : Number(b["提案日期"]) - Number(a["提案日期"]);
+            });
+        }
+    },
+    methods: {
+        async fetchData() {
+            try {
+                const response = await axios.get("http://localhost:5000/api/proposals");
+                this.proposals = response.data;
+                console.log(this.proposals)
+            } catch (error) {
+                console.error("無法獲取數據:", error);
+            } finally {
+                this.loading = false;
+            }
+        },
+        toggleFilterOption(option) {
+            if (!this.pendingFilters[this.dropdownOpen]) {
+                this.pendingFilters[this.dropdownOpen] = [];
+            }
+
+            const index = this.pendingFilters[this.dropdownOpen].indexOf(option);
+
+            if (index > -1) {
+                this.pendingFilters[this.dropdownOpen].splice(index, 1);
+            } else {
+                this.pendingFilters[this.dropdownOpen].push(option);
+            }
+        },
+
+        toggleDropdown(key, event) {
+            if (key === "預算金額" || key === "回覆備註") return; 
+
+            if (this.dropdownOpen === key) {
+                this.dropdownOpen = null;
+                return;
+            }
+
+            this.dropdownOpen = key;
+            this.searchQuery[key] = ""; 
+
+            // ✅ 確保 `pendingFilters` 是 `selectedFilters` 的複製品
+            this.pendingFilters[key] = [...(this.selectedFilters[key] || [])];
+
+            this.$nextTick(() => {
+                const rect = event.target.getBoundingClientRect();
+                this.dropdownPosition = {
+                    top: rect.bottom + window.scrollY + 10,
+                    left: rect.left + window.scrollX
+                };
+            });
+
+            document.addEventListener("click", this.closeDropdownOnClickOutside);
+            event.stopPropagation();
+        },
+
+        applyFilters() {
+            if (this.dropdownOpen) {
+                this.selectedFilters[this.dropdownOpen] = [...(this.pendingFilters[this.dropdownOpen] || [])];
+                this.dropdownOpen = null; // ✅ 關閉篩選選單
+            }
+        },
+
+        resetFilter(key) {
+            if (key) {
+                // ✅ 只清除當前篩選選單的條件
+                this.pendingFilters[key] = [];
+                this.selectedFilters[key] = [];
+            } else {
+                // ✅ 如果沒有指定 key，清除所有篩選條件
+                this.pendingFilters = {};
+                this.selectedFilters = {};
+            }
+        },
+
+        closeDropdownOnClickOutside(event) {
+            if (!event.target.closest(".fixed")) {
+                this.dropdownOpen = null;
+                document.removeEventListener("click", this.closeDropdownOnClickOutside);
+            }
+        },
+        sortColumn() {
+            this.sortOrder = this.sortOrder === "asc" ? "desc" : this.sortOrder === "desc" ? null : "asc";
+        },
+        toggleAllSelection() {
+            if (this.isAllSelected) {
+                this.pendingFilters[this.dropdownOpen] = [];
+            } else {
+                this.pendingFilters[this.dropdownOpen] = [...this.filteredDropdownOptions];
+            }
+        },
+        getLastRemark(remarks) {
+            if (!Array.isArray(remarks) || remarks.length === 0) return "無回覆";
+            let text = remarks[remarks.length - 1]
+                .replace(/\r/g, " ")  
+                .replace(/\n/g, " ")  
+                .replace(/<br>/g, " ") 
+            // **每 20 個字插入換行**
+            return text;
+        },
+        resetAllFilters() {
+            this.pendingFilters = {};  // 清除暫存篩選條件
+            this.selectedFilters = {}; // 清除已套用的篩選條件
+            this.dropdownOpen = null;  // 確保篩選選單關閉
+            this.sortOrder = null; // 取消排序
+        },
+        openEditModal(proposal) {
+            this.editingRow = { ...proposal }; // 深拷貝，避免影響原始資料
+        },
+        async saveChanges() {
+            try {
+                await axios.put(`http://localhost:5000/api/proposals/${this.editingRow["總表項次"]}`, this.editingRow);
+                alert("修改成功！");
+                this.editingRow = null;
+                this.fetchData(); // 重新獲取資料
+            } catch (error) {
+                console.error("更新失敗:", error);
+                alert("修改失敗，請重試");
+            }
+        },
+        closeEditModal() {
+            this.editingRow = null; // 取消編輯
+        },
+
+    },
+    mounted() {
+        this.fetchData();
+    }
+});
+
+app.mount("#app");
+</script>
+
+</body>
+</html>
