@@ -1,5 +1,3 @@
-<!DOCTYPE html>
-<html lang="zh-TW">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -7,16 +5,21 @@
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/vue@3"></script>
+    <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.0/Sortable.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/vuedraggable@4.1.0/dist/vuedraggable.umd.min.js"></script>
+
+    <!-- ✅ 加上 Element Plus -->
+    <link rel="stylesheet" href="https://unpkg.com/element-plus/dist/index.css" />
+    <script src="https://unpkg.com/element-plus"></script>
 
     <style>
-        /* 讓標題永遠固定在最上方 */
         #title-bar {
             position: sticky;
             top: 0;
             z-index: 50;
             background-color: #f8fafc;
         }
-        /* 確保表格不會影響到滾動條 */
         .table-container {
             max-height: 750px;
             overflow-y: auto;
@@ -87,63 +90,153 @@
         沒有符合條件的資料
     </div>
 
-        <!-- 可編輯的「詳細資訊」卡片 -->
-    <div v-if="editingRow" class="fixed inset-0 bg-gray-900 bg-opacity-50 flex justify-center items-center z-50">
-        <div class="bg-white p-6 rounded-lg w-96">
-            <h3 class="text-xl font-bold mb-4">編輯資料</h3>
-            <div class="space-y-2">
-                <div v-for="(value, key) in editingRow" :key="key" class="flex justify-between">
-                    <span class="font-semibold">{{ key }}：</span>
-                    <input v-model="editingRow[key]" class="border px-2 py-1 w-full" />
+    <div v-if="editingRow" class="fixed inset-0 bg-gray-900 bg-opacity-50 flex justify-center items-start z-50 overflow-y-auto py-10">
+        <div class="bg-white p-8 rounded-xl w-[1200px] max-h-[95vh] overflow-y-auto shadow-2xl">
+            <h3 class="text-3xl font-bold mb-6">編輯資料</h3>
+      
+            <!-- 編輯原始欄位 -->
+            <div class="space-y-4 mb-6">
+                <div v-for="(value, key) in editingRow" :key="key" class="flex items-center space-x-4">
+                    <span class="font-semibold w-32 shrink-0 text-right">{{ key }}：</span>
+                    <input v-model="editingRow[key]" class="border px-3 py-2 flex-1 rounded bg-gray-50" />
                 </div>
             </div>
-            <div class="mt-4 flex justify-between">
-                <button @click="closeEditModal" class="px-4 py-2 bg-gray-400 text-white rounded">取消</button>
-                <button @click="saveChanges" class="px-4 py-2 bg-green-500 text-white rounded">儲存</button>
+      
+            <!-- 💡 插入完整的拖曳節點編輯區（從深色頁面移植） -->
+            <div class="flex bg-gray-900 text-white rounded-lg overflow-hidden">
+                <!-- 側邊欄 -->
+                <div class="w-64 bg-gray-800 p-4 flex-shrink-0 overflow-y-auto">
+                    <h2 class="text-xl font-bold mb-4">側邊欄</h2>
+                    <p class="text-sm text-gray-400">點選節點後可編輯內容</p>
+      
+                    <div v-if="selectedNode" class="mt-6">
+                        <h3 class="text-md font-semibold mb-2">編輯節點文字</h3>
+                        <input
+                            type="text"
+                            v-model="selectedNode.text"
+                            class="w-full p-2 bg-gray-700 text-white rounded border border-gray-600"
+                        />
+      
+                        <!-- 動態欄位 -->
+                        <h3 class="text-md font-semibold mb-2 mt-4">欄位項目</h3>
+                        <div v-for="(field, index) in selectedNode.fields" :key="index" class="mb-2">
+                            <input
+                                type="text"
+                                v-model="field.item"
+                                placeholder="項目"
+                                class="w-full mb-1 p-2 bg-gray-700 text-white rounded border border-gray-600"
+                            />
+                        <button @click="removeField(index)" class="text-red-400 text-sm mt-1">🗑️ 刪除</button>
+                    </div>
+      
+                    <button
+                        @click="addField"
+                        class="mt-2 px-3 py-1 bg-gray-600 rounded hover:bg-gray-500 text-white text-sm"
+                    >➕ 新增欄位</button>
+                </div>
+                <!-- 匯出 JSON -->
+                <div class="mt-4 text-left">
+                    <button
+                        @click="exportJSON"
+                        class="px-4 py-2 bg-yellow-500 rounded hover:bg-yellow-600 text-black font-semibold shadow"
+                    >🚀 匯出 JSON</button>
+                </div>
             </div>
+      
+            <!-- 主區域 -->
+            <div class="flex-1 flex flex-col pt-10 px-6 overflow-hidden">
+              <!-- 節點列 -->
+              <div class="overflow-x-auto max-w-full">
+                <draggable
+                  v-model="nodes"
+                  item-key="id"
+                  animation="200"
+                  ghost-class="opacity-30"
+                  class="min-w-fit flex items-center py-4"
+                  :handle="'.drag-handle'"
+                >
+                    <template #item="{ element, index }">
+                        <div class="flex items-center space-x-2">
+                            <!-- 節點 -->
+                            <div
+                                class="flex flex-col items-center cursor-pointer px-2"
+                                @click="selectedNodeId = element.id"
+                            >
+                            <div class="text-sm text-white text-center mb-1 break-words whitespace-normal max-w-[8rem]">
+                                {{ element.text }}
+                            </div>
+                            <div
+                                class="w-12 h-12 flex items-center justify-center text-2xl rounded-full shadow-lg select-none"
+                                :class="{
+                                'bg-green-600': element.status === '完成',
+                                'bg-red-600': element.status === '未完成',
+                                'hover:bg-green-500': element.status === '完成',
+                                'hover:bg-red-500': element.status === '未完成'
+                                }"
+                            >
+                                {{ element.status === '完成' ? '✅' : '❌' }}
+                            </div>
+                        </div>
+                            <div v-if="index < nodes.length - 1" class="text-2xl text-yellow-400">👈</div>
+                        </div>
+                    </template>
+                </draggable>
+            </div>
+      
+            <!-- 操作按鈕列 -->
+            <div class="flex justify-end gap-4 mt-6">
+                <button
+                    @click="addNode"
+                    class="px-4 py-2 bg-green-600 rounded hover:bg-green-700 text-white font-semibold shadow"
+                >➕ 新增節點</button>
+                <button
+                    @click="removeNode"
+                    class="px-4 py-2 bg-red-600 rounded hover:bg-red-700 text-white font-semibold shadow"
+                >🗑️ 刪除節點</button>
+            </div>
+      
+              <!-- 標記完成按鈕 -->
+
+            <el-tree
+                v-if="selectedNode"
+                :data="selectedNode.fields"
+                show-checkbox
+                node-key="id"
+                default-expand-all
+                :expand-on-click-node="false"
+                :check-strictly="false"
+                @check-change="handleTreeCheckChange"
+            />
+            <!-- 樹狀結構編輯按鈕區 -->
+            <div class="mt-4">
+                <el-button type="primary" @click="addTreeRootNode">新增根節點</el-button>
+            </div>
+      
         </div>
     </div>
-
-    <!-- 篩選選單 -->
-    <div v-if="dropdownOpen" class="fixed bg-white border shadow-lg rounded-lg p-4 z-50 w-72 dropdown-menu"
-        :style="{ top: dropdownPosition.top + 'px', left: dropdownPosition.left + 'px' }">
-
-        <!-- 搜索框 -->
-        <input type="text" v-model="searchQuery[dropdownOpen]" placeholder="輸入篩選條件..."
-            class="w-full px-3 py-2 border rounded mb-2">
-
-        <!-- "全選" 選項 -->
-        <label class="block py-2 font-bold">
-            <input type="checkbox" :checked="isAllSelected" @change="toggleAllSelection" class="mr-2">
-            全選 (ALL)
-        </label>
-
-        <!-- 可選條件清單 -->
-        <div class="max-h-80 overflow-y-auto">
-            <label v-for="option in filteredDropdownOptions" :key="option" class="block py-2">
-                <input type="checkbox"
-                :value="option"
-                :checked="pendingFilters[dropdownOpen]?.includes(option)"
-                @change="toggleFilterOption(option)"
-                class="mr-2">
-                {{ option }}
-            </label>
-        </div>
-
-        <!-- 操作按鈕 -->
-        <div class="mt-4 flex justify-between">
-            <!-- <button @click="resetFilter(dropdownOpen)" class="px-4 py-2 bg-gray-400 text-white rounded">重置</button> -->
-            <button @click="resetFilter(dropdownOpen)" class="px-4 py-2 bg-gray-400 text-white rounded">重置</button>
-            <button @click="applyFilters" class="px-4 py-2 bg-blue-500 text-white rounded">套用</button>
-        </div>
+      
+          <!-- 儲存區 -->
+    <div class="mt-6 flex justify-end space-x-4">
+        <button @click="closeEditModal" class="px-5 py-2 bg-gray-400 text-white rounded">取消</button>
+        <button @click="saveChanges" class="px-5 py-2 bg-green-500 text-white rounded">儲存</button>
+        <button
+            @click="markAsCompleted"
+            class="px-4 py-2 rounded text-white font-semibold shadow"
+            :class="selectedNode?.status === '完成' ? 'bg-gray-600 hover:bg-gray-500' : 'bg-blue-600 hover:bg-blue-700'"
+            :disabled="!selectedNode"
+            >
+            {{ selectedNode?.status === '完成' ? '❎ 取消完成' : '✅ 標記完成' }}
+        </button>
     </div>
-
-
-
+    </div>
 </div>
+      
+</div>      
 
 <script>
+const draggable = vuedraggable;
 const app = Vue.createApp({
+    components: { draggable },
     data() {
         return {
             proposals: [],
@@ -159,6 +252,21 @@ const app = Vue.createApp({
             dropdownPosition: { top: 0, left: 0 }, // 記錄篩選卡片的位置
             sortOrder: null, // 排序狀態 ('asc', 'desc', null)
             editingRow: null, // 存放當前正在編輯的行
+                    // ✅ 加這兩個
+            treeData: [],
+            defaultTreeProps: {
+                children: 'children',
+                label: 'label'
+            },
+            // 拖曳節點
+            nodes: Array.from({ length: 3 }, (_, i) => ({
+                id: i + 1,
+                text: `節點 ${i + 1} 的說明`,
+                status: '未完成',
+                fields: []
+            })),
+            nextId: 4,
+            selectedNodeId: null
         };
     },
     computed: {
@@ -208,8 +316,20 @@ const app = Vue.createApp({
                     ? Number(a["提案日期"]) - Number(b["提案日期"])
                     : Number(b["提案日期"]) - Number(a["提案日期"]);
             });
+        },
+        selectedNode() {
+            return this.nodes.find(n => n.id === this.selectedNodeId) || null;
         }
     },
+    // selectedNode: {
+    //     get() {
+    //         return this.nodes.find(n => n.id === this.selectedNodeId);
+    //     },
+    //     set(newVal) {
+    //         const index = this.nodes.findIndex(n => n.id === newVal.id);
+    //         if (index !== -1) this.nodes.splice(index, 1, newVal);
+    //     }
+    // },
     methods: {
         async fetchData() {
             try {
@@ -312,9 +432,17 @@ const app = Vue.createApp({
             this.dropdownOpen = null;  // 確保篩選選單關閉
             this.sortOrder = null; // 取消排序
         },
-        openEditModal(proposal) {
-            this.editingRow = { ...proposal }; // 深拷貝，避免影響原始資料
+        async openEditModal(proposal) {
+            this.editingRow = { ...proposal };
+            try {
+                const response = await axios.get("http://localhost:5000/api/tree");
+                this.treeData = response.data;
+            } catch (err) {
+                console.error("載入樹失敗", err);
+                this.treeData = []; // 保底清空
+            }
         },
+
         async saveChanges() {
             try {
                 await axios.put(`http://localhost:5000/api/proposals/${this.editingRow["總表項次"]}`, this.editingRow);
@@ -329,6 +457,75 @@ const app = Vue.createApp({
         closeEditModal() {
             this.editingRow = null; // 取消編輯
         },
+        addNode() {
+            this.nodes.push({
+                id: this.nextId,
+                text: `節點 ${this.nextId} 的說明`,
+                status: '未完成',
+                fields: []
+            });
+            this.nextId++;
+        },
+        removeNode() {
+            if (this.nodes.length > 0) {
+                const removed = this.nodes.pop();
+                if (removed.id === this.selectedNodeId) {
+                this.selectedNodeId = null;
+                }
+                this.nextId--;
+            }
+        },
+        markAsCompleted() {
+            const node = this.nodes.find(n => n.id === this.selectedNodeId);
+            if (node) {
+                node.status = node.status === '完成' ? '未完成' : '完成';
+            }
+        },
+
+        addField() {
+            if (this.selectedNode) {
+                this.selectedNode.fields.push({ item: '', due: '' });
+            }
+        },
+        removeField(index) {
+            if (this.selectedNode) {
+                this.selectedNode.fields.splice(index, 1);
+            }
+        },
+        exportJSON() {
+            const result = this.nodes.map(node => ({
+                id: node.id,
+                name: node.text,
+                completed: node.status === '完成',
+                fields: node.fields // ✅ fields 已是 el-tree 結構
+            }));
+            console.log("🚀 匯出 JSON:", JSON.stringify(result, null, 2));
+            alert("已匯出，請打開 console 查看結果！");
+        },
+        addTreeRootNode() {
+            if (this.selectedNode) {
+                this.selectedNode.fields.push({
+                id: Date.now(),
+                label: '新節點',
+                checked: false,
+                children: []
+                });
+            }
+        },
+        handleTreeCheckChange(data, checked) {
+            data.checked = checked;
+            this.updateParentCheckedState(this.selectedNode.fields);
+        },
+        updateParentCheckedState(nodes) {
+            nodes.forEach(node => {
+                if (node.children && node.children.length > 0) {
+                this.updateParentCheckedState(node.children);
+                const allChecked = node.children.every(c => c.checked);
+                const someChecked = node.children.some(c => c.checked);
+                node.checked = allChecked || someChecked;
+                }
+            });
+        },
 
     },
     mounted() {
@@ -336,6 +533,7 @@ const app = Vue.createApp({
     }
 });
 
+app.use(ElementPlus);
 app.mount("#app");
 </script>
 

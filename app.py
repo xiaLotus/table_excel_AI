@@ -66,7 +66,7 @@ def save_proposals_to_csv(proposals):
 @app.route('/api/proposals', methods=['GET'])
 def get_proposals():
     proposals = load_proposals_from_csv()
-    print(proposals)
+    # print(proposals)
     return jsonify(proposals)
 
 
@@ -89,6 +89,12 @@ def update_proposal(item_id):
     save_proposals_to_csv(proposals)  # 存回 CSV
     return jsonify({"message": "更新成功"}), 200
 
+@app.route('/api/tree')
+def load_tree():
+    import json
+    with open("tree_data/20250120.json", "r", encoding="utf-8") as f:
+        tree = json.load(f)
+    return jsonify(tree)
 
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0', port=5000)
